@@ -1,13 +1,16 @@
 
-The DNSZone package
-===================
+The DNS::ZoneFile package
+=========================
 
-DNSZone - a tool to manipulate DNS zone files
-DNSZone::Record - a object model for the individual records
+DNS::ZoneFile - a tool to manipulate DNS zone files
+DNS::ZoneFile::Record - a object model for the individual records
                   in a zone.
 
 Both are written by and are (c) Copyright Matthew Byng-Maddick
 <matthew@codix.net> 1999
+
+Bug reports and, if you like, fixes should be sent here, and I'll try
+to include them in the official distribution.
 
 The authoritative source for this is at http://colondot.net/japh/DNSZone/
 
@@ -15,7 +18,8 @@ You are free to use, distribute and modify this as you like, but an
 indication of the original author must be included.
 
 I would also like to be kept abreast of the modifications that are made
-to DNSZone.pm and DNSZone/Record.pm
+to ZoneFile.pm and ZoneFile/Record.pm, but that's just because I'm
+curious to know what I've done wrong.
 
 The standard way to build this package is
 
@@ -24,5 +28,3 @@ make
 make test
 make install
 
-Although, at present there are no tests, these will come in a future
-distribution of the package.

@@ -4,7 +4,7 @@
 
 package DNS::ZoneFile;
 
-$VERSION="0.91";
+$VERSION="0.92";
 
 =head1 NAME
 
@@ -14,7 +14,7 @@ B<DNS::ZoneFile> - Object management of a DNS Zone
 
 C<use DNS::ZoneFile;>
 
-$zone=B<DNS::ZoneFile>->new(I<zonefilename>);
+$zone=B<DNS::ZoneFile>->new(I<zonefilename>,I<args>...);
 
 @arr=$zone->getRecord(I<name>,I<type>);
 
@@ -38,10 +38,14 @@ and can manipulate some of the more useful bits of the zone file, such as C<upda
 
 Object methods for the B<DNS::ZoneFile> object:
 
-=head2 B<new>(I<file>)
+=head2 B<new>(I<file>,I<args>...)
 
 The B<new>() method takes as its argument the name of a zone file to read in, this builds the
 zone database into memory. You must call this before trying to use any of the methods below.
+I know that I should do this in a non file-based way, and I'll probably do that in the next
+release. The I<args> are used to populate a hash of preferences. So far the only key that is
+supported is I<AllNames>, which, if set to true will print out all of the names in the
+B<printZone>() method, instead of blank spacing them.
 
 =head2 B<getRecord>(I<name>,I<type>)
 
@@ -99,13 +103,17 @@ use DNS::ZoneFile::Record;
 
 sub new
 	{
-	my($package,$file)=@_;
+	my($package)=shift;
+	my($file)=shift;
 	return(undef) unless(open(ZONE,$file));
 	my($origin);
 	my(@arr);
 	my($flag)="";
 	my($multiline);
 	my($name,$type);
+	# Fix as suggested by HO to fix $/ problems
+	my($oldRS)=$/;
+	$/="\n";
 	while(<ZONE>)
 		{
 		s/;.*$//g;
@@ -154,8 +162,10 @@ sub new
 			}
 		}
 	close(ZONE);
+	$/=$oldRS;
 	my(%ret);
 	$ret{Data}=\@arr;
+	$ret{Pref}={@_};
 	return(bless \%ret);
 	}
 
@@ -313,8 +323,19 @@ sub printZone
 			$name=$1;
 			$neworig=$2;
 			}
-		$zone.=($origin ne $neworig)?"\$ORIGIN $neworig\n":"";
-		$zone.=($name ne $oldname)?$name."\t"x(length($name)>7?1:2):"\t\t";
+		if($origin ne $neworig)
+			{
+			$zone.="\$ORIGIN $neworig\n";
+			$oldname="";
+			}
+		if($REF->{Pref}->{AllNames})
+			{
+			$zone.=$name."\t"x(length($name)>7?1:2);
+			}
+		else
+			{
+			$zone.=($name ne $oldname)?$name."\t"x(length($name)>7?1:2):"\t\t";
+			}
 		$zone.="IN\t".$_->Type()."\t";
 		$oldname=$name;
 		$origin=$neworig;
@@ -349,7 +370,7 @@ sub parseSOA
 	{
 	my($soa)=@_;
 	return($1,$2,$3,$4,$5,$6,$7)
-		if($soa=~/^(\S+)\s+(\S+)\s*\(\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\)/s);
+		if($soa=~/^(\S+)\s+(\S+)\s*\(\s*(\d+)\s+(\d+[smhdwSMHDW]?)\s+(\d+[smhdwSMHDW]?)\s+(\d+[smhdwSMHDW]?)\s+(\d+[smhdwSMHDW]?)\s*\)/s);
 	}
 
 1;

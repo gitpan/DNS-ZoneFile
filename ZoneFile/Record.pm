@@ -162,7 +162,7 @@ sub new
 	elsif($h{Type} eq "MX")
 		{
 		$h{Cost}=$data[0];
-		$h{Server}=$data[1];
+		$h{Server}=canonicalise($origin,$data[1]);
 		}
 	return(bless(\%h));
 	}
@@ -247,6 +247,7 @@ sub canonicalise
 	my($origin,$addr)=@_;
 	$addr=lc($addr);
 	$origin="" if($origin eq ".");
+	return $origin if($addr eq "\@");
 	return $addr.".".$origin
 		if($addr!~/^\d+\.\d+\.\d+\.\d+$/ && $addr !~ /\.$/);
 	return $addr;
