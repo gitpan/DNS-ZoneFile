@@ -4,7 +4,7 @@
 
 package DNS::ZoneFile;
 
-$VERSION="0.90";
+$VERSION="0.91";
 
 =head1 NAME
 
@@ -25,6 +25,8 @@ $zone->delRecord(I<name>,I<type>);
 $zone->sortZone();
 
 $zone->updateSerial();
+
+$zone->serial();
 
 B<print> $zone->printZone();
 
@@ -69,6 +71,10 @@ I<start of authority> for the zone is at the top of the file.
 
 B<updateSerial> is just that, it updates the serial number for the database for an edit.
 
+=head2 B<serial>()
+
+A read only method to read the serial number for this zone.
+
 =head2 B<printZone>()
 
 B<printZone> returns the zone file as sorted and updated, in a form which you can then just
@@ -97,7 +103,7 @@ sub new
 	return(undef) unless(open(ZONE,$file));
 	my($origin);
 	my(@arr);
-	my($flag);
+	my($flag)="";
 	my($multiline);
 	my($name,$type);
 	while(<ZONE>)
@@ -162,16 +168,15 @@ sub sortZone
 		{
 		return(1) if($b->Type() eq "SOA");
 		return(-1) if($a->Type() eq "SOA");
-		return(1) if($b->Type() eq "NS");
-		return(-1) if($a->Type() eq "NS");
 		my(@aarr)=split/\./,$a->Name();
 		my(@barr)=split/\./,$b->Name();
 		@aarr=reverse @aarr;
 		@barr=reverse @barr;
-		my($i);
+		my $i=0;
 		for($i=0;$aarr[$i] && $barr[$i];$i++)
 			{
-			last if($aarr[$i] cmp $barr[$i]);
+			return($aarr[$i] cmp $barr[$i])
+				if($aarr[$i] cmp $barr[$i]);
 			}
 		if($aarr[$i] && !$barr[$i])
 			{
@@ -183,7 +188,10 @@ sub sortZone
 			}
 		else
 			{
-			$aarr[$i] cmp $barr[$i];
+			return(1) if($b->Type() eq "NS");
+			return(-1) if($a->Type() eq "NS");
+			return(1) if($b->Type() eq "MX");
+			return(-1) if($a->Type() eq "MX");
 			}
 		} @arr;
 	$REF->{Data}=\@ar2;
@@ -208,10 +216,12 @@ sub delRecord
 		if($type)
 			{
 			push(@ar2,$_) unless($type eq $_->Type() && $name eq $_->Name());
+			$count++ if($type eq $_->Type() && $name eq $_->Name());
 			}
 		else
 			{
 			push(@ar2,$_) unless($name eq $_->Name());
+			$count++ if($name eq $_->Name());
 			}
 		}
 	$REF->{Data}=\@ar2;
@@ -237,6 +247,16 @@ sub getRecord
 			}
 		}
 	return(@ret);
+	}
+
+sub serial
+	{
+	my($REF)=@_;
+	my(@arr)=$REF->getData();
+	for(@arr)
+		{
+		return($_->Serial()) if($_->Type() eq "SOA");
+		}
 	}
 
 sub getData
@@ -276,12 +296,12 @@ sub updateSerial
 sub printZone
 	{
 	my($REF)=@_;
-	my($origin,$oldname,$zone);
+	my($origin,$oldname,$zone)=("","","");
 	$REF->sortZone();
 	my(@data)=$REF->getData();
 	for(@data)
 		{
-		my($neworig);
+		my($neworig)="";
 		my($name)=$_->Name();
 		if($name=~/^([^\.]+)\.$/)
 			{
@@ -294,22 +314,27 @@ sub printZone
 			$neworig=$2;
 			}
 		$zone.=($origin ne $neworig)?"\$ORIGIN $neworig\n":"";
-		$zone.=($name ne $oldname)?$name."\t":"\t\t";
+		$zone.=($name ne $oldname)?$name."\t"x(length($name)>7?1:2):"\t\t";
 		$zone.="IN\t".$_->Type()."\t";
 		$oldname=$name;
 		$origin=$neworig;
 		if($_->Type() eq "SOA")
 			{
 			$zone.=($_->getRecord())[0]." ".($_->getRecord())[1]." (\n";
-			$zone.="\t\t\t\t".($_->getRecord())[2]." ; Serial Number\n";
-			$zone.="\t\t\t\t".($_->getRecord())[3]." ; Refresh time (secs)\n";
-			$zone.="\t\t\t\t".($_->getRecord())[4]." ; Retry Refresh (secs)\n";
-			$zone.="\t\t\t\t".($_->getRecord())[5]." ; Expiry time (secs)\n";
-			$zone.="\t\t\t\t".($_->getRecord())[6]."); Minimum Time to Live (secs)";
+			$zone.="\t\t\t\t".($_->getRecord())[2]." "x(11-length(($_->getRecord())[2])).
+				" ; Serial Number\n";
+			$zone.="\t\t\t\t".($_->getRecord())[3]." "x(11-length(($_->getRecord())[3])).
+				" ; Refresh time (secs)\n";
+			$zone.="\t\t\t\t".($_->getRecord())[4]." "x(11-length(($_->getRecord())[4])).
+				" ; Retry Refresh (secs)\n";
+			$zone.="\t\t\t\t".($_->getRecord())[5]." "x(11-length(($_->getRecord())[5])).
+				" ; Expiry time (secs)\n";
+			$zone.="\t\t\t\t".($_->getRecord())[6].")"." "x(11-length(($_->getRecord())[6])).
+				"; Minimum Time to Live (secs)";
 			}
 		elsif($_->Type() eq "MX")
 			{
-			$zone.=($_->getRecord())[0]." ".($_->getRecord())[1];
+			$zone.=($_->getRecord())[0]."\t".($_->getRecord())[1];
 			}
 		else
 			{

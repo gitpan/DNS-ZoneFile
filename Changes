@@ -1,3 +1,5 @@
+Version 0.91	9/8/99		Matthew Byng-Maddick <matthew@codix.net>
+	Added some tests and read serial number from zone functionality.
 Version 0.90	9/8/99		Matthew Byng-Maddick <matthew@codix.net>
 	Changed name to DNS::ZoneFile on request of Tim Bunce
 	<Tim.Bunce@ig.co.uk>.

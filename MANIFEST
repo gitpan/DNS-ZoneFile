@@ -4,3 +4,8 @@ MANIFEST
 Makefile.PL
 ZoneFile.pm
 ZoneFile/Record.pm
+t/add_record.t
+t/del_record.t
+t/print_zone.t
+t/serial_num.t
+t/sort_zone.t
