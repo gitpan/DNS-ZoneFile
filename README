@@ -1,30 +1,19 @@
+########################################################
+########################################################
+##                 I M P O R T A N T                  ##
+########################################################
+########################################################
 
-The DNS::ZoneFile package
-=========================
+$Id: README,v 1.1 2000/09/24 23:53:13 mbm Exp $
 
-DNS::ZoneFile - a tool to manipulate DNS zone files
-DNS::ZoneFile::Record - a object model for the individual records
-                  in a zone.
+*** THIS CODE IS NOT FINISHED ***
 
-Both are written by and are (c) Copyright Matthew Byng-Maddick
-<matthew@codix.net> 1999
+This doesn't implement anything like the same interface
+that the previous version did. In fact a large amount of
+the interface and API code remains unwritten because it's
+been sitting on my hard disc for the last 6 months. I have
+been persuaded to release unfinished code to the community
+(yes, greg, you managed to persuade me). So here it is if
+you want to play with it.
 
-Bug reports and, if you like, fixes should be sent here, and I'll try
-to include them in the official distribution.
-
-The authoritative source for this is at http://colondot.net/japh/DNSZone/
-
-You are free to use, distribute and modify this as you like, but an
-indication of the original author must be included.
-
-I would also like to be kept abreast of the modifications that are made
-to ZoneFile.pm and ZoneFile/Record.pm, but that's just because I'm
-curious to know what I've done wrong.
-
-The standard way to build this package is
-
-perl Makefile.PL
-make
-make test
-make install
-
+Please email me: matthew@codix.net with all your patches etc.

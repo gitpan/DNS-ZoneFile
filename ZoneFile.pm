@@ -1,92 +1,845 @@
-#!/usr/bin/perl
-
-# DNS::ZoneFile, written by Matthew Byng-Maddick <matthew@codix.net>
-
 package DNS::ZoneFile;
 
-$VERSION="0.92";
+# This is DNS::ZoneFile, an object oriented way to manage information in DNS
+# master files. This version is intended to be used both to create such files
+# and to add and delete records.
+# 
+# $Id: ZoneFile.pm,v 1.5 2000/09/24 23:56:33 mbm Exp $
+#
+# (c) Copyright Matthew Byng-Maddick <matthew@codix.net> 2000
+# 
+# This is distributed under the GNU General Public Licence or the Artistic
+# Licence as with Perl itself
+#
+
+# We need perl 5.005 regexps, because these are the ones that deal easily with
+# quoted strings and the suchlike...
+require 5.005;
+
+use strict;
+use vars qw($VERSION %TYPES @DEFAULTS);
+
+$VERSION="0.95";
 
 =head1 NAME
 
-B<DNS::ZoneFile> - Object management of a DNS Zone
+	DNS::ZoneFile - Object-Oriented Management of a Master File
 
 =head1 SYNOPSIS
 
-C<use DNS::ZoneFile;>
+	use C<DNS::ZoneFile>;
 
-$zone=B<DNS::ZoneFile>->new(I<zonefilename>,I<args>...);
+	my $zone=C<DNS::ZoneFile>->new(
+		$filename_or_file_as_scalar,
+		ZONE_ORIGIN	=>	$ORIGIN,
+		NEW_ZONE	=>	$NEW_ZONE,
+		);
 
-@arr=$zone->getRecord(I<name>,I<type>);
+	$zone->addRecord(
+		Domain	=>	$domain,
+		TTL	=>	$ttl,
+		Class	=>	$class,
+		Type	=>	$type,
+		Data	=>	\@arr,
+		);
 
-$zone->addRecord(I<name>,I<type>,I<data>...);
+	$zone->deleteRecord(
+		$domain
+		);
+		
+	$zone->deleteRecord(
+		$domain,
+		$type
+		);
 
-$zone->delRecord(I<name>,I<type>);
+	$zone->printZone();
 
-$zone->sortZone();
+=cut
 
-$zone->updateSerial();
+# in %TYPES,
+#  A => Address
+#  I => IP Address
+#  M => Mailbox
+#  N => Number
+#  S => String
+#  T => Time
+%TYPES=(
+	SOA	=>	['A','M','N','T','T','T','T'],
+	A	=>	['I'],
+# must find out about this one...
+#	AA	=>	[],
+	MX	=>	['N','A'],
+	CNAME	=>	['A'],
+	NS	=>	['A'],
+	TXT	=>	['S'],
+	RP	=>	['M','S'],
+	NULL	=>	[],
+	PTR	=>	['A']
+	);
 
-$zone->serial();
+@DEFAULTS=(
+	ZONE_ORIGIN	=>	'.',
+	NEW_ZONE	=>	0,
+	);
 
-B<print> $zone->printZone();
+#### THIS IS *ALL* ALPHA CODE ####
 
 =head1 DESCRIPTION
 
-The B<DNS::ZoneFile> module provides for users to manipulate a DNS Zone database using an object
-oriented model. The B<DNS::ZoneFile> object is a store for lots of B<DNS::ZoneFile::Record> objects,
-and can manipulate some of the more useful bits of the zone file, such as C<updateSerial>.
+=head2 my I<$zone>=DNS::ZoneFile->B<new>(I<$file>,I<%params>);
 
-Object methods for the B<DNS::ZoneFile> object:
+B<new>() creates a new DNS::ZoneFile object. It is initialised either from
+the filename supplied, or, if the first argument is a reference to a scalar,
+then the values is read.
 
-=head2 B<new>(I<file>,I<args>...)
+Params:
 
-The B<new>() method takes as its argument the name of a zone file to read in, this builds the
-zone database into memory. You must call this before trying to use any of the methods below.
-I know that I should do this in a non file-based way, and I'll probably do that in the next
-release. The I<args> are used to populate a hash of preferences. So far the only key that is
-supported is I<AllNames>, which, if set to true will print out all of the names in the
-B<printZone>() method, instead of blank spacing them.
+=over 5
 
-=head2 B<getRecord>(I<name>,I<type>)
+=item ZONE_ORIGIN (.)
 
-The B<getRecord>() method will try to get all of the records matching a full (canonical) name
-with an optional I<type> argument, such that you might do, for example
-$zone->B<getRecord>('codix.net.', 'mx');
+Sets the $ORIGIN for this zone.
 
-=head2 B<addRecord>(I<name>,I<type>,I<data>...)
+=item NEW_ZONE (false)
 
-The B<addRecord>() method is exactly that, it does minimal checking, except that it won't
-allow you to add a SOA record, as there should only ever be one of those per zone file. The
-data is in most cases just one address, unless the record is an MX record, in which case
-the first argument is the MX cost.
+If unset and DNS::ZoneFile can't read any data, then return undef. Otherwise
+create a new SOA. (If this is set, ZONE_ORIGIN shouldn't really be set to '.')
 
-=head2 B<delRecord>(I<name>,I<type>)
+=back
 
-The B<delRecord> method deletes a record from the zone database. The type argument is
-optional, if missed, it will delete all records matching the supplied name.
+=cut
 
-=head2 B<sortZone>()
+sub new
+	{
+	my $proto=shift;
+	my $pack=ref $proto or $proto;
+	my $file=shift;
+	my $text="";
+	if($file)
+		{
+		if(ref($file))
+			{
+			return undef unless(ref($file) ne 'SCALAR');
+			$text=$$file;
+			}
+		else
+			{
+			open(ZONEFILE,$file) or return undef;
+			local $/=undef;
+			$text=<ZONEFILE>;
+			close(ZONEFILE);
+			}
+		}
+	my $self=bless {@DEFAULTS,@_}, $pack;
+	return undef unless length $text or $self->{"NEW_ZONE"};
+	if($self->{"ProcessIncludes"})
+		{
+		print STDERR "DNS::ZoneFile: ProcessIncludes: Use of this option is deprecated\n";
+		}
+	unless($self->readZoneFile($text))
+		{
+		return bless {FAILED=>1,ERROR=>$self->{"ERROR"}},$pack;
+		}
+	$self->{"SUCCESS"}=1;
+	return $self;
+	}
 
-B<sortZone> is called automatically whenever a B<printZone>() is called. It sorts the
-zone file into a reasonable order, to be able to print. It will also make sure that the
-I<start of authority> for the zone is at the top of the file.
+=head2 I<$zone>->B<success>();
 
-=head2 B<updateSerial>()
+Returns true if the object was created OK, false if otherwise.
 
-B<updateSerial> is just that, it updates the serial number for the database for an edit.
+=cut
 
-=head2 B<serial>()
+sub success
+	{
+	my $self=shift;
+	return undef if($self->{"FAILED"} || !$self->{"SUCCESS"});
+	return 1;
+	}
 
-A read only method to read the serial number for this zone.
+=head2 I<$zone>->B<fail>();
 
-=head2 B<printZone>()
+Returns the error message of a a failed object call, or false if
+the object was created OK.
 
-B<printZone> returns the zone file as sorted and updated, in a form which you can then just
-output to the zone file, with the correct I<start of authority> record.
+=cut
+
+sub fail
+	{
+	my $self=shift;
+	return undef if(!$self->{"FAILED"} || $self->{"SUCCESS"});
+	return ($self->{"ERROR"} || 1);
+	}
+
+=head2 I<$zone>->B<addRecord>(I<@RRDATA>);
+
+This will add a record to the zone (maybe that should be %RRDATA?)
+
+=cut
+
+sub addRecord
+	{
+	}
+
+=head2 I<$zone>->B<deleteRecord>(I<$domain>[,I<$type>]);
+
+This is also unwritten as yet - but I envisage this as a 
+$zone->deleteRecord("rigel.codix.net","MX"); or
+$zone->deleteRecord("alioth.codix.net");
+
+=cut
+
+sub deleteRecord
+	{
+	}
+
+=head2 I<$zone>->B<printZone>();
+
+Returns a (reference to)? a scalar which is the zone file in full.
+or perhaps it keeps track of the filenames to open?
+
+=cut
+
+sub printZone
+	{
+	}
+
+#### SOME OF THIS IS ALPHA CODE ####
+#### utility functions ####
+
+sub readZoneFile
+	{
+	my $self=shift;
+	my $ZFText=shift;
+
+	$self->{"RECORDS"}=[];
+
+	my $currRec="";
+	my $currComm="";
+
+	my $lines=split/\n/,$ZFText;
+	while($ZFText&&(($ZFText,$currRec,$currComm)=getRecord($self,$ZFText)))
+		{
+		if($currRec)
+			{
+			# this is a full record
+			my $record=parseRecord($self,$currRec);
+			if(defined ($record))
+				{
+				if($record)
+					{
+					# XXX: I really should be using the old
+					# method of having each RR as a separate
+					# record
+					$record->{"COMMENT"}=$currComm;
+					push(@{$self->{"RECORDS"}},$record);
+					}
+				}
+			else
+				{
+				my $new_lines=split/\n/,$ZFText;
+				my $err_line=$lines-$new_lines;
+				$self->{"ERROR"}="Error around line $err_line: ".
+					$self->{"FAIL_REASON"};
+				return undef;
+				}
+			}
+		elsif($currComm)
+			{
+			# this is a comment only
+			# we only want to preserve these if we are
+			# keeping the order the same.
+			if($self->{"KEEP_ORDER"})
+				{
+				# XXX: again the comment should be a RR object.
+				push(@{$self->{"RECORDS"}},{COMMENT=>$currComm});
+				}
+			}
+		else
+			{
+			my $new_lines=split/\n/,$ZFText;
+			my $err_line=$lines-$new_lines;
+			$self->{"ERROR"}="Error around line $err_line: ".
+				$self->{"FAIL_REASON"};
+			return undef;
+			}
+		}
+	return 1;
+	}
+
+# getRecord
+#   this gets the next record from the text of the master file passed in
+#   its argument.
+sub getRecord
+	{
+	my $self=shift;
+	my $currentText=shift;
+
+	return "" unless($currentText);
+	my $currentRecord="";
+	my $currentComment="";
+
+	$currentText=~s/^\s*\n//s;
+
+	my $foundAllRecord=0;
+	do
+		{
+		# strip out comments on this line.
+		$currentText=~s{
+				^([^"\n]*?					# match some non-quoted string stuff
+				(((?<!\\)"([^"]|\\")*(?<!\\)"[^"\n]*?)*?))	# match any number of quoted strings
+										#  with trailing non-quoted strings.
+				[ \t]*((?<!\\);[^\n]*)?\n			# match a comment (trailing space or ;.*)
+			}{}xs;
+		# $1 should now contain the actual record text
+		$currentRecord.=$1;
+
+		# keep track of the comments
+		my $ccLine=$5;
+		$ccLine=~s/;\s*(\S(.*\S)?)?\s*$/$1/msg;
+		($currentComment ne "") ? ($currentComment.="\n".$ccLine) : ($currentComment=$ccLine);
+
+		if(!length($currentRecord) && !length($currentComment))
+			{
+			$foundAllRecord=2;
+			}
+
+		my $infoRecord=$currentRecord;
+
+		# get rid of quoted strings
+		$infoRecord=~s/^([^"]*?)((?<!\\)"([^"]|\\")*(?<!\\)")/$1/sg;
+
+		# get rid of nested parenthetised expressions
+		while($infoRecord=~s{
+				(?<!\\)\(				# non-backslash prefixed open bracket
+				([^\(\)]|\\\(|\\\))*			# any number of backslashed brackets or
+									#  non-bracket characters
+				(?<!\\)\)				# non-backslash prefixed close bracket
+				}{}xs){}
+ 
+		# end if we haven't got an unmatched open bracket or a half finished comment
+		$foundAllRecord=1 if(!$foundAllRecord && $infoRecord!~/(?<!\\)\(/s && $currentText!~/^[ \t]*;/s)
+		}
+	while(!$foundAllRecord);
+	if($foundAllRecord==2)
+		{
+		$self->{"FAIL_REASON"}="Unterminated string.";
+		return($currentText,"","");
+		}
+
+	# tidy up the comments
+	$currentComment=~s/\n\s*\n/\n/sg;
+
+	# tidy up the record itself
+	my @record=split/((?<!\\)"(?:[^"]|\\")*")/,$currentRecord;	# split the record into quoted strings
+	for my $part (@record)
+		{
+		if($part!~/^".*"$/)
+			{
+			# we're not inside a quoted string
+			$part=~s/(?<!\\)[\(\)]//g;			# get rid of all non quoted parens
+			$part=~s/\s+/ /g;				# reduce spaces
+			}
+		}
+	$currentRecord=join("",@record);				# glue it back together
+
+	return($currentText,$currentRecord,$currentComment);
+	}
+
+# parseRecord
+#   Turn record into hash reference, checking for syntactic validity of
+#   its components. This assumes you've run getRecord() first.
+#   This is a horrid function, even though it does just about work. :)
+sub parseRecord
+	{
+	my $self=shift;
+	my $record=shift;
+	my %hash=();
+
+	# the following code all assumes that we've run getRecord() above
+	if($record=~/^\$ORIGIN\s+(.*)$/si)
+		{
+		my $origin;
+		if(defined($origin=canonicalise($self,$1,"A")))
+			{
+			$self->{"CURRENT_ORIGIN"}=$origin;
+			return 0;
+			}
+		$self->{"FAIL_REASON"}="\$ORIGIN requires a domain.";
+		return undef;
+		}
+	if($record=~/^\$TTL\s+(.*)$/si)
+		{
+		my $ttl;
+		if(defined($ttl=canonicalise($self,$1,"T")))
+			{
+			$self->{"CURRENT_TTL"}=$ttl;
+			return 0;
+			}
+		$self->{"FAIL_REASON"}="\$TTL requires a time.";
+		return undef;
+		}
+	else
+		{
+		# split record into its various parts, keeping all the quoting.
+		my @record=split/\s+((?<!\\)"(?:[^"]|\\")*(?<!\\)")?/,$record;
+		my @r2=();
+		my $first=0;
+		for my $part (@record)
+			{
+			push(@r2,$part) if(!($first++)||(length($part)));
+			}
+		@record=@r2;
+		if($record[0] eq "\$INCLUDE")
+			{
+			$hash{"SPECIAL"}="INCLUDE";
+			$hash{"INCLUDE_FILENAME"}=canonicalise($self,$record[1],"S");
+			if($record[2])
+				{
+				$hash{"INCLUDE_ORIGIN"}=canonicalise($self,$record[2],"A");
+				if(!defined($hash{"INCLUDE_ORIGIN"}))
+					{
+					$self->{"FAIL_REASON"}="\$INCLUDE second argument must be a domain.";
+					return undef;
+					}
+				}
+			else
+				{
+				$hash{"INCLUDE_ORIGIN"}=$self->{"ZONE_ORIGIN"};
+				}
+			unless($hash{"INCLUDE_FILENAME"})
+				{
+				$self->{"FAIL_REASON"}="\$INCLUDE requires filename.";
+				return undef;
+				}
+			}
+		else
+			{
+			if($record[0] eq "")
+				{
+				$hash{"DOMAIN"}=$self->{"LAST_DOMAIN"};
+				}
+			else
+				{
+				my $domain;
+				if(defined($domain=canonicalise($self,$record[0],"A")))
+					{
+					$hash{"DOMAIN"}=$domain;
+					$self->{"LAST_DOMAIN"}=$domain;
+					}
+				else
+					{
+					$self->{"FAIL_REASON"}="Couldn't canonicalise domain part.";
+					return undef;
+					}
+				}
+			shift(@record);
+			my $class=0;
+			my $ttl=0;
+			# deal with class and ttl as necessary
+			if(lc($record[0]) eq "in")
+				{
+				shift(@record);
+				$class++;
+				}
+			if(defined($ttl=canonicalise($self,$record[0],"T")))
+				{
+				if(defined($self->{"MINIMUM_TTL"}))
+					{
+					if($ttl<$self->{"MINIMUM_TTL"})
+						{
+						$hash{"TTL"}=$self->{"MINIMUM_TTL"};
+						}
+					else
+						{
+						$hash{"TTL"}=$ttl;
+						}
+					}
+				else
+					{
+					$hash{"TTL"}=$ttl;
+					}
+				shift(@record);
+				}
+			if(lc($record[0]) eq "in")
+				{
+				if($class)
+					{
+					$self->{"FAIL_REASON"}="Found two class definitions for RR.";
+					return undef;
+					}
+				shift(@record);
+				}
+			$hash{"TTL"}=$self->{"CURRENT_TTL"} if(!defined($hash{"TTL"}));
+			# by the time we get here, we should have @record containing just the RR
+			if(ref($TYPES{uc($record[0])}))
+				{
+				$hash{"TYPE"}=uc(shift(@record));
+				$hash{"RR_DATA"}=[];
+				if($#record != $#{$TYPES{$hash{"TYPE"}}})
+					{
+					$self->{"FAIL_REASON"}="Argument inconsistency: expected ".
+						($#{$TYPES{$hash{"TYPE"}}}+1)." arguments for ".$hash{"TYPE"}.
+						" record, and got ".($#record+1)." arguments.";
+					return undef;
+					}
+				for my $i (0..$#{$TYPES{$hash{"TYPE"}}})
+					{
+					my $part=canonicalise($self,$record[$i],${$TYPES{$hash{"TYPE"}}}[$i]);
+					if(!defined($part))
+						{
+						$i++;
+						$self->{"FAIL_REASON"}="Incorrect format for part '".$record[$i-1].
+							"'($i) of RR for '".$hash{"DOMAIN"}."'.";
+						return undef;
+						}
+					push(@{$hash{"RR_DATA"}},$part);
+					}
+				}
+			else
+				{
+				$self->{"FAIL_REASON"}="Unknown RR type \"".uc($record[0])."\".";
+				return undef;
+				}
+			}
+		}
+	return \%hash;
+	}
+
+#updateSerial
+#   This function will update the serial number in the zone file loaded.
+
+sub updateSerial
+	{
+	my $self=shift;
+
+	my $snum;
+
+# need to add some kind of check here.....
+
+	for my $record (@{$self->{"RECORDS"}})
+		{
+		if($record->{"TYPE"} eq "SOA")
+			{
+			# read the current serial number;
+			my($oyr,$omth,$oday,$onum)=unpack("a4a2a2a2",$record->{"RR_DATA"}->[2]);
+			
+			# read the time
+			my @t=localtime();
+
+			# is this another version today?
+			if( ($t[5]+1900==$oyr) && ($t[4]+1==$omth) && ($t[3]==$oday) )
+				{
+				# Yes
+				$snum=printWithZeros($oyr,4);
+				$snum.=printWithZeros($omth,2);
+				$snum.=printWithZeros($oday,2);
+				$snum.=printWithZeros(++$onum,2);
+				}
+			else
+				{
+				# No
+				$snum=printWithZeros($t[5]+1900,4);
+				$snum.=printWithZeros($t[4]+1,2);
+				$snum.=printWithZeros($t[3],2);
+				$snum.=printWithZeros(0,2);
+				}
+			$record->{"RR_DATA"}->[2]=$snum;
+			}
+		}
+	}
+
+#printWithZeros
+#   Utility function to print a number with enough zeros to fill the
+#   passed width.
+sub printWithZeros
+	{
+	my $num=shift;
+	my $wdth=shift;
+
+	# XXX: this must be horribly inefficient, not sure what the best
+	# way to fix it is.
+	$num+=0;
+	return "0" x ($wdth - length($num)).$num;
+	}
+
+# canonicalise
+#   This function turns an element of an RR into it's fully qualified and
+#   unquoted form, checking that it conforms to the relevant syntax. It
+#   returns the relevant text if it succeeds, or undef if the syntax fails.
+sub canonicalise
+	{
+	my $self=shift;
+	my $text=shift;
+	my $type=shift;
+
+	$self->{"CURRENT_ORIGIN"}=$self->{"ZONE_ORIGIN"}
+		if(!$self->{"CURRENT_ORIGIN"});
+	if($type eq 'A')
+		{
+		# domain name
+		$text=$self->{"CURRENT_ORIGIN"} if($text eq '@');
+		if($text=~/^"(.*)"$/s)
+			{
+			$text=$1;
+			$text=~s/\\"/"/sg;
+			}
+		else
+			{
+			$text=~s/\\(\d{3})/chr($1)/eg;
+			$text=~s/\\(\D)/$1/g;
+			}
+		$text.=".".$self->{"CURRENT_ORIGIN"} if($text!~/\.$/);
+		$text=~s/\.\.$/./;
+		return undef if($text!~/^(\.|([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+)$/i);
+		return $text;
+		}
+	elsif($type eq 'I')
+		{
+		# IP address
+		return undef if($text!~/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+		return undef if(($1>255) || ($2>255) || ($3>255) || ($4>255));
+		return $text;
+		}
+	elsif($type eq 'M')
+		{
+		# mailbox name
+		my($lp,$dp);
+		return undef if($text eq '@');
+		if($text=~/^"(.*)"$/s)
+			{
+			$text=$1;
+			$text=~s/\\"/"/sg;
+			# I can nowhere find documentation on what happens
+			# if a mailbox is a quoted string. The following
+			# code is therefore an assumption.
+			$lp=$text;
+			$dp=$self->{"CURRENT_ORIGIN"};
+			}
+		else
+			{
+			$text.=".".$self->{"CURRENT_ORIGIN"} if($text!~/\.$/);
+			$text=~s/\.\.$/./;
+			my @mb=split/(?<!\\)\./,$text;
+			$lp=shift(@mb);
+			$dp=join(".",@mb).".";
+			$dp=~s/\.\.$/./;
+
+			$lp=~s/\\(\d{3})/chr($1)/eg;	# unquote, as in the RFCs
+			$lp=~s/\\(\D)/$1/g;		# more unquoting
+			$dp=~s/\\(\d{3})/chr($1)/eg;
+			$dp=~s/\\(\D)/$1/g;
+			}
+		return undef if($dp!~/^(\.|([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+)$/i);
+		return $lp.'@'.$dp;
+		}
+	elsif($type eq 'N')
+		{
+		# number
+		return undef if($text!~/^\d+$/);
+		return $text;
+		}
+	elsif($type eq 'S')
+		{
+		# string
+		if($text=~/^"(.*)"$/s)
+			{
+			$text=$1;
+			$text=~s/\\"/"/sg;
+			}
+		else
+			{
+			$text=~s/\\(\d{3})/chr($1)/eg;
+			$text=~s/\\(\D)/$1/g;
+			}
+		return $text;
+		}
+	elsif($type eq 'T')
+		{
+		# time
+		if($text=~/^"(.*)"$/s)
+			{
+			$text=$1;
+			$text=~s/\\"/"/sg;
+			}
+		else
+			{
+			$text=~s/\\(\d{3})/chr($1)/eg;
+			$text=~s/\\(\D)/$1/g;
+			}
+		return undef if($text!~/^(\d+|(\d+[wdhms])+)$/i);
+		if($text=~/^\d+$/)
+			{
+			return $text;
+			}
+		else
+			{
+			my $total=0;
+			my $lastnum=0;
+			my @parts=split/([WwDdHhMmSs])/,$text;
+			for my $part (@parts)
+				{
+				if($part=~/^\d+$/)
+					{
+					$lastnum=$part;
+					}
+				else
+					{
+					if(lc($part) eq "w")
+						{
+						$total+=$lastnum*608400;
+						$lastnum=0;
+						}
+					elsif(lc($part) eq "d")
+						{
+						$total+=$lastnum*86400;
+						$lastnum=0;
+						}
+					elsif(lc($part) eq "h")
+						{
+						$total+=$lastnum*3600;
+						$lastnum=0;
+						}
+					elsif(lc($part) eq "m")
+						{
+						$total+=$lastnum*60;
+						$lastnum=0;
+						}
+					elsif(lc($part) eq "s")
+						{
+						$total+=$lastnum;
+						$lastnum=0;
+						}
+					}
+				}
+			$total+=$lastnum;
+			return $total;
+			}
+		}
+	return undef; # unrecognised type
+	}
+
+sub deCanonicalise
+	{
+	my $self=shift;
+	my $text=shift;
+	my $type=shift;
+
+	if($type eq 'A')
+		{
+		# domain name
+		if(lc($text) eq lc($self->{"CURRENT_ORIGIN"}))
+			{
+			return "@";
+			}
+		my $origin=lc($self->{"CURRENT_ORIGIN"});
+		if(($origin ne ".") && (length($origin)+1<length($text)) &&
+			(substr(lc($text),-length($origin)-1) eq ".".$origin))
+			{
+			$text=substr($text,0,-length($origin)-1);
+			}
+		if($origin eq ".")
+			{
+			$text=~s/\.$//;
+			}
+		return undef if($text!~/^(\.|([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+)$/i);
+		return $text;
+		}
+	elsif($type eq 'I')
+		{
+		# IP address
+		return undef if($text!~/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+		return undef if(($1>255) || ($2>255) || ($3>255) || ($4>255));
+		return $text;
+		}
+	elsif($type eq 'M')
+		{
+		# mailbox name
+		my($lp,$dp)=split/\@/,$text;
+		$lp=~s/\./\\./sg;
+		$lp=~s/([\(\);"])/\\$1/sg;
+		# horrid hack below to make sure it prints leading '0's
+		$lp=~s/([^a-zA-Z0-9+=\.\(\);"-])/"\\".substr(1000+ord($1),1)/esg;
+		my $origin=lc($self->{"CURRENT_ORIGIN"});
+		if(($origin ne ".") && (length($origin)+1<length($dp)) &&
+			(substr(lc($dp),-length($origin)-1) eq ".".$origin))
+			{
+			$dp=substr($dp,0,-length($origin)-1);
+			}
+		if($origin eq ".")
+			{
+			$dp=~s/\.$//;
+			}
+		return undef if($dp!~/^(\.|([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+)$/i);
+		$text=$lp;
+		$text.=".".$dp if($dp);
+		return $text;
+		}
+	elsif($type eq 'N')
+		{
+		# number
+		return undef if($text!~/^\d+$/);
+		return $text;
+		}
+	elsif($type eq 'S')
+		{
+		# string
+		$text=~s/"/\\"/sg;
+		return "\"".$text."\"";
+		}
+	elsif($type eq 'T')
+		{
+		return undef if($text!~/^\d+$/);
+		my $orig=$text;
+		my %thash=();
+		while($text>604800)
+			{
+			$text-=604800;
+			$thash{"W"}++;
+			}
+		while($text>86400)
+			{
+			$text-=86400;
+			$thash{"D"}++;
+			}
+		while($text>3600)
+			{
+			$text-=3600;
+			$thash{"H"}++;
+			}
+		while($text>60)
+			{
+			$text-=60;
+			$thash{"M"}++;
+			}
+		$thash{"S"}=$text;
+		my $tstr="";
+		$tstr.=$thash{"W"}."W" if($thash{"W"});
+		$tstr.=$thash{"D"}."D" if($thash{"D"});
+		$tstr.=$thash{"H"}."H" if($thash{"H"});
+		$tstr.=$thash{"M"}."M" if($thash{"M"});
+		$tstr.=$thash{"S"}."S" if($thash{"S"});
+		if(length($tstr)<length($orig))
+			{
+			return $tstr;
+			}
+		else
+			{
+			return $orig;
+			}
+		}
+	return undef;
+	}
 
 =head1 COMMENTS
 
-This is currently alpha software, internal structures are likely to change at any time.
+I have been recommended to release this bit of code unfinished
+onto CPAN by some people - yes Greg, you know who you are - I'm
+fully aware that this doesn't abstract enough yet.
+
+Hopefully doing this will enable me to write it quicker.
+
+Version: 0.95
 
 =head1 AUTHOR
 
@@ -94,283 +847,8 @@ Matthew Byng-Maddick C<<matthew@codix.net>>
 
 =head1 SEE ALSO
 
-B<DNS::ZoneFile::Record>,L<bind(8)>
+L<bind(8)>
 
 =cut
-
-use strict;
-use DNS::ZoneFile::Record;
-
-sub new
-	{
-	my($package)=shift;
-	my($file)=shift;
-	return(undef) unless(open(ZONE,$file));
-	my($origin);
-	my(@arr);
-	my($flag)="";
-	my($multiline);
-	my($name,$type);
-	# Fix as suggested by HO to fix $/ problems
-	my($oldRS)=$/;
-	$/="\n";
-	while(<ZONE>)
-		{
-		s/;.*$//g;
-		if($flag eq "in_soa")
-			{
-			$multiline.=$_;
-			if(/\)/)
-				{
-				$flag="soa_done";
-				push(@arr,DNS::ZoneFile::Record->new($origin,$name,$type,parseSOA($multiline)));
-				}
-			}
-		if(/\$ORIGIN\s+(\.)?(\S*)/i)
-			{
-			$origin=$2;
-			}
-		elsif(/\s*((\S*[^0-9\s]+\S*)\s+)?(\d+\s+)?IN\s+(\S+)\s+(\S.*)\s*$/i)
-			{
-			my(%h);
-			if($2)
-				{
-				$name=$2;
-				}
-			$type=uc($4);
-			if($type eq "SOA" && $flag ne "soa_done")
-				{
-				if(!/\)/)
-					{
-					$flag="in_soa";
-					$multiline=$5;
-					}
-				else
-					{
-					$flag="soa_done";
-					push(@arr,DNS::ZoneFile::Record->new($origin,$name,$type,parseSOA($5)));
-					}
-				}
-			elsif($type eq "MX")
-				{
-				push(@arr,DNS::ZoneFile::Record->new($origin,$name,$type,(split/\s+/,$5)));
-				}
-			else
-				{
-				push(@arr,DNS::ZoneFile::Record->new($origin,$name,$type,$5));
-				}
-			}
-		}
-	close(ZONE);
-	$/=$oldRS;
-	my(%ret);
-	$ret{Data}=\@arr;
-	$ret{Pref}={@_};
-	return(bless \%ret);
-	}
-
-sub sortZone
-	{
-	my($REF)=@_;
-	my(@arr)=$REF->getData();
-	my(@ar2);
-	@ar2=sort
-		{
-		return(1) if($b->Type() eq "SOA");
-		return(-1) if($a->Type() eq "SOA");
-		my(@aarr)=split/\./,$a->Name();
-		my(@barr)=split/\./,$b->Name();
-		@aarr=reverse @aarr;
-		@barr=reverse @barr;
-		my $i=0;
-		for($i=0;$aarr[$i] && $barr[$i];$i++)
-			{
-			return($aarr[$i] cmp $barr[$i])
-				if($aarr[$i] cmp $barr[$i]);
-			}
-		if($aarr[$i] && !$barr[$i])
-			{
-			return(1);
-			}
-		elsif($barr[$i] && !$aarr[$i])
-			{
-			return(-1);
-			}
-		else
-			{
-			return(1) if($b->Type() eq "NS");
-			return(-1) if($a->Type() eq "NS");
-			return(1) if($b->Type() eq "MX");
-			return(-1) if($a->Type() eq "MX");
-			}
-		} @arr;
-	$REF->{Data}=\@ar2;
-	return(1);
-	}
-
-sub addRecord
-	{
-	my($REF,$name,$type,@data)=@_;
-	push(@{$REF->{Data}},DNS::ZoneFile::Record->new(".",$name,$type,@data)) if($type ne "SOA");
-	}
-
-sub delRecord
-	{
-	my($REF,$name,$type)=@_;
-	my($count)=0;
-	return(0) if(!$name);
-	my(@arr)=$REF->getData();
-	my(@ar2);
-	for(@arr)
-		{
-		if($type)
-			{
-			push(@ar2,$_) unless($type eq $_->Type() && $name eq $_->Name());
-			$count++ if($type eq $_->Type() && $name eq $_->Name());
-			}
-		else
-			{
-			push(@ar2,$_) unless($name eq $_->Name());
-			$count++ if($name eq $_->Name());
-			}
-		}
-	$REF->{Data}=\@ar2;
-	return($count);
-	}
-
-sub getRecord
-	{
-	my($REF,$name,$type)=@_;
-	$type=uc($type);
-	my(@arr)=$REF->getData();
-	my(@ret);
-	for(@arr)
-		{
-		my(@ar2)=$_->getRecord();
-		if($type)
-			{
-			push(@ret,\@ar2) if($name eq $_->Name() && $type eq $_->Type());
-			}
-		else
-			{
-			push(@ret,\@ar2) if($name eq $_->Name());
-			}
-		}
-	return(@ret);
-	}
-
-sub serial
-	{
-	my($REF)=@_;
-	my(@arr)=$REF->getData();
-	for(@arr)
-		{
-		return($_->Serial()) if($_->Type() eq "SOA");
-		}
-	}
-
-sub getData
-	{
-	return(@{$_[0]->{Data}});
-	}
-
-sub updateSerial
-	{
-	my($REF)=@_;
-	my($snum);
-	for($REF->getData())
-		{
-		if($_->Type() eq "SOA")
-			{
-			my($oldyear,$oldmonth,$oldday,$oldversion)=unpack("a4a2a2a2",$_->Serial());
-			my(@arr)=localtime();
-			if(($arr[5]+1900==$oldyear)&&($arr[4]+1==$oldmonth)&&($arr[3]==$oldday))
-				{
-				$snum="0"x(4-length($oldyear)).$oldyear;
-				$snum.="0"x(2-length($oldmonth)).$oldmonth;
-				$snum.="0"x(2-length($oldday)).$oldday;
-				$snum.="0"x(2-length(++$oldversion)).$oldversion;
-				}
-			else
-				{
-				$snum="0"x(4-length($arr[5]+1900)).($arr[5]+1900);
-				$snum.="0"x(2-length($arr[4]+1)).($arr[4]+1);
-				$snum.="0"x(2-length($arr[3])).$arr[3];
-				$snum.="00";
-				}
-			$_->Serial($snum);
-			}
-		}
-	}
-
-sub printZone
-	{
-	my($REF)=@_;
-	my($origin,$oldname,$zone)=("","","");
-	$REF->sortZone();
-	my(@data)=$REF->getData();
-	for(@data)
-		{
-		my($neworig)="";
-		my($name)=$_->Name();
-		if($name=~/^([^\.]+)\.$/)
-			{
-			$name=$1;
-			$neworig=".";
-			}
-		elsif($name=~/^([^\.]+)\.(.*)$/)
-			{
-			$name=$1;
-			$neworig=$2;
-			}
-		if($origin ne $neworig)
-			{
-			$zone.="\$ORIGIN $neworig\n";
-			$oldname="";
-			}
-		if($REF->{Pref}->{AllNames})
-			{
-			$zone.=$name."\t"x(length($name)>7?1:2);
-			}
-		else
-			{
-			$zone.=($name ne $oldname)?$name."\t"x(length($name)>7?1:2):"\t\t";
-			}
-		$zone.="IN\t".$_->Type()."\t";
-		$oldname=$name;
-		$origin=$neworig;
-		if($_->Type() eq "SOA")
-			{
-			$zone.=($_->getRecord())[0]." ".($_->getRecord())[1]." (\n";
-			$zone.="\t\t\t\t".($_->getRecord())[2]." "x(11-length(($_->getRecord())[2])).
-				" ; Serial Number\n";
-			$zone.="\t\t\t\t".($_->getRecord())[3]." "x(11-length(($_->getRecord())[3])).
-				" ; Refresh time (secs)\n";
-			$zone.="\t\t\t\t".($_->getRecord())[4]." "x(11-length(($_->getRecord())[4])).
-				" ; Retry Refresh (secs)\n";
-			$zone.="\t\t\t\t".($_->getRecord())[5]." "x(11-length(($_->getRecord())[5])).
-				" ; Expiry time (secs)\n";
-			$zone.="\t\t\t\t".($_->getRecord())[6].")"." "x(11-length(($_->getRecord())[6])).
-				"; Minimum Time to Live (secs)";
-			}
-		elsif($_->Type() eq "MX")
-			{
-			$zone.=($_->getRecord())[0]."\t".($_->getRecord())[1];
-			}
-		else
-			{
-			$zone.=$_->Addr();
-			}
-		$zone.="\n";
-		}
-	return($zone);
-	}
-
-sub parseSOA
-	{
-	my($soa)=@_;
-	return($1,$2,$3,$4,$5,$6,$7)
-		if($soa=~/^(\S+)\s+(\S+)\s*\(\s*(\d+)\s+(\d+[smhdwSMHDW]?)\s+(\d+[smhdwSMHDW]?)\s+(\d+[smhdwSMHDW]?)\s+(\d+[smhdwSMHDW]?)\s*\)/s);
-	}
 
 1;

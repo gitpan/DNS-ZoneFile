@@ -1,6 +1,7 @@
-require 5.004;
+require 5.005;
 use ExtUtils::MakeMaker;
 
+# $Id$
 WriteMakefile(
 	'NAME'		=>	'DNS::ZoneFile',
 	'VERSION_FROM'	=>	'ZoneFile.pm',
