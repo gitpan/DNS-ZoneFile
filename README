@@ -1,0 +1,28 @@
+
+The DNSZone package
+===================
+
+DNSZone - a tool to manipulate DNS zone files
+DNSZone::Record - a object model for the individual records
+                  in a zone.
+
+Both are written by and are (c) Copyright Matthew Byng-Maddick
+<matthew@codix.net> 1999
+
+The authoritative source for this is at http://colondot.net/japh/DNSZone/
+
+You are free to use, distribute and modify this as you like, but an
+indication of the original author must be included.
+
+I would also like to be kept abreast of the modifications that are made
+to DNSZone.pm and DNSZone/Record.pm
+
+The standard way to build this package is
+
+perl Makefile.PL
+make
+make test
+make install
+
+Although, at present there are no tests, these will come in a future
+distribution of the package.

@@ -1,0 +1,6 @@
+Version 0.90	9/8/99		Matthew Byng-Maddick <matthew@codix.net>
+	Changed name to DNS::ZoneFile on request of Tim Bunce
+	<Tim.Bunce@ig.co.uk>.
+Version 0.90	8/8/99		Matthew Byng-Maddick <matthew@codix.net>
+	Preliminary version, intended for general release. Has enough
+	functionality to make it useful.
